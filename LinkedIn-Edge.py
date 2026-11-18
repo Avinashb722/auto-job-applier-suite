@@ -856,7 +856,7 @@ def build_linkedin_search_url(keyword):
     Constructs a URL targeting ONLY:
       - Easy Apply (f_AL=true)
       - Fresh postings (f_TPR=r86400 -> Past 24h)
-      - Entry Level & Internship (f_E=1%2C2)
+      - Entry Level (f_E=2)
       - Sorted by Date (sortBy=DD)
     """
     params = {
@@ -864,7 +864,7 @@ def build_linkedin_search_url(keyword):
         'location': LOCATION,
         'f_AL': 'true',          # Only Easy Apply
         'f_TPR': 'r86400',       # Past 24 hours (fresh)
-        'f_E': '1,2',            # 1=Internship, 2=Entry level
+        'f_E': '2',              # 2=Entry level
         'sortBy': 'DD'           # Most recent
     }
     return f"https://www.linkedin.com/jobs/search/?{urllib.parse.urlencode(params)}"
@@ -873,59 +873,110 @@ def build_linkedin_search_url(keyword):
 def apply_linkedin_entry_level_filter(driver):
     """
     Applies the 'Entry-level' filter in LinkedIn's modern UI.
-    Opens the 'Experience level' pill, clicks 'Entry-level' checkbox directly, and submits 'Show results'.
+    Finds the visible 'Experience level' pill (with verified dimensions > 10px),
+    clicks it to open the popup dropdown, selects the 'Entry-level' checkbox, and clicks 'Show results'.
     """
     try:
-        # Check if Entry-level pill is already active (green pill)
-        active_pills = driver.find_elements(
-            By.XPATH,
-            "//div[contains(@aria-label, 'Filter by') and (contains(., 'Entry-level') or contains(., 'Entry level'))] | "
-            "//*[contains(text(), 'Entry-level') and contains(@class, 'active')]"
-        )
-        if active_pills:
-            logger.info("✓ LinkedIn 'Entry-level' filter is already active.")
-            return
+        # 1. Target specifically the real visible filter pill with height > 10 and width > 10
+        target_pill = None
 
-        # 1. Click the 'Experience level' pill
-        exp_pills = driver.find_elements(
+        candidate_pills = driver.find_elements(
             By.XPATH,
             "//div[@aria-label='Filter by Experience level'] | "
-            "//label[normalize-space(.)='Experience level'] | "
-            "//*[normalize-space(.)='Experience level' and not(self::option)]"
+            "//button[contains(., 'Experience level')] | "
+            "//label[normalize-space(.)='Experience level']"
         )
-        if not exp_pills:
-            logger.debug("Experience level pill not found on page.")
+        for p in candidate_pills:
+            try:
+                if p.is_displayed() and p.size.get('height', 0) > 10 and p.size.get('width', 0) > 10:
+                    target_pill = p
+                    break
+            except Exception:
+                continue
+
+        if not target_pill:
+            # Secondary scan for any button/pill containing Experience level in top filter bar
+            fallback_pills = driver.find_elements(
+                By.XPATH,
+                "//nav//button[contains(., 'Experience')] | "
+                "//header//button[contains(., 'Experience')] | "
+                "//div[contains(@class, 'filter')]//*[normalize-space(.)='Experience level']"
+            )
+            for p in fallback_pills:
+                try:
+                    if p.is_displayed() and p.size.get('height', 0) > 10 and p.size.get('width', 0) > 10:
+                        target_pill = p
+                        break
+                except Exception:
+                    continue
+
+        if not target_pill:
+            logger.info("Experience level filter pill not found or already in applied state.")
             return
 
         logger.info("Clicking LinkedIn 'Experience level' filter pill...")
-        ActionChains(driver).move_to_element(exp_pills[0]).click().perform()
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", target_pill)
+            time.sleep(0.3)
+            ActionChains(driver).move_to_element(target_pill).click().perform()
+        except Exception:
+            driver.execute_script("arguments[0].click();", target_pill)
         time.sleep(1.5)
 
-        # 2. Click the exact 'Entry-level' checkbox input by aria-label
+        # 2. Verify if the popup dropdown opened by looking for the Entry-level checkbox
         entry_cbs = driver.find_elements(
             By.XPATH,
             "//input[@type='checkbox' and @aria-label='Entry-level'] | "
             "//input[@type='checkbox' and contains(@aria-label, 'Entry')] | "
-            "//p[normalize-space(.)='Entry-level']/ancestor::div[contains(@class, 'LazyColumn')]//input[@type='checkbox']"
+            "//label[contains(., 'Entry-level')]//input[@type='checkbox']"
         )
-        if entry_cbs:
-            logger.info("Selecting 'Entry-level' checkbox...")
+
+        if not entry_cbs:
+            # If popup didn't open on first try, trigger via JS dispatch
+            logger.info("Dropdown popup did not open on first click, retrying with JavaScript dispatch...")
             try:
-                ActionChains(driver).move_to_element(entry_cbs[0]).click().perform()
+                driver.execute_script(
+                    "arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));",
+                    target_pill
+                )
             except Exception:
-                driver.execute_script("arguments[0].click();", entry_cbs[0])
-            time.sleep(1)
+                driver.execute_script("arguments[0].click();", target_pill)
+            time.sleep(1.5)
+            entry_cbs = driver.find_elements(
+                By.XPATH,
+                "//input[@type='checkbox' and @aria-label='Entry-level'] | "
+                "//input[@type='checkbox' and contains(@aria-label, 'Entry')] | "
+                "//label[contains(., 'Entry-level')]//input[@type='checkbox']"
+            )
+
+        # 3. Select the 'Entry-level' checkbox
+        if entry_cbs:
+            cb = entry_cbs[0]
+            if not cb.is_selected():
+                logger.info("Selecting 'Entry-level' checkbox in popup...")
+                try:
+                    ActionChains(driver).move_to_element(cb).click().perform()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", cb)
+                time.sleep(1)
+            else:
+                logger.info("✓ 'Entry-level' checkbox is already checked.")
         else:
-            # Fallback to clicking text
-            entry_options = driver.find_elements(By.XPATH, "//p[normalize-space(.)='Entry-level']")
+            # Text label fallback
+            entry_options = driver.find_elements(
+                By.XPATH,
+                "//label[normalize-space(.)='Entry-level'] | "
+                "//p[normalize-space(.)='Entry-level']"
+            )
             if entry_options:
+                logger.info("Clicking 'Entry-level' label text...")
                 try:
                     ActionChains(driver).move_to_element(entry_options[0]).click().perform()
                 except Exception:
                     driver.execute_script("arguments[0].click();", entry_options[0])
                 time.sleep(1)
 
-        # 3. Click 'Show results' button (may be <a>, <button>, or <span>)
+        # 4. Click 'Show results' button (may be <a>, <button>, or <span>)
         show_btns = driver.find_elements(
             By.XPATH,
             "//span[normalize-space(.)='Show results']/ancestor::a | "
@@ -942,7 +993,7 @@ def apply_linkedin_entry_level_filter(driver):
                 except Exception:
                     driver.execute_script("arguments[0].click();", b)
                 time.sleep(3)
-                logger.info("✓ Entry-level filter applied successfully!")
+                logger.info("✓ Entry-level filter applied successfully! Only 0-2 yrs jobs will be processed.")
                 break
 
     except Exception as e:
