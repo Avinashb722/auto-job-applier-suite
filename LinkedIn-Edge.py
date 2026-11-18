@@ -436,7 +436,7 @@ def ask_ai_for_modal_answer(question_text, is_numeric=False):
         import requests
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
         cand_name = os.getenv('CANDIDATE_NAME', 'the candidate')
-        num_instruction = "This input accepts ONLY a single integer or decimal number (e.g. 1, 0, 8.5, 400000). Output ONLY the number." if is_numeric else "Provide a concise, professional answer (1-2 sentences max) written in the first person based on the candidate's resume."
+        num_instruction = "This input accepts ONLY a single integer or decimal number (e.g. 1, 0, 4, 8.5). Output ONLY digits, strictly NO words, letters, or units like LPA or years." if is_numeric else "Provide a concise, professional answer (1-2 sentences max) written in the first person based on the candidate's resume."
         prompt = f"""You are filling out a job application on behalf of candidate {cand_name} using his resume.
 
 Candidate Resume:
@@ -454,6 +454,10 @@ Formatting Rules:
         if res.status_code == 200:
             ans = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             ans = ans.replace('"', '').replace("'", '').strip()
+            if is_numeric:
+                digits_only = re.sub(r'[^\d.]', '', ans).strip()
+                if digits_only:
+                    ans = digits_only
             if ans:
                 logger.info(f"  🤖 Gemini AI generated answer: '{ans[:60]}'")
                 return ans
@@ -493,7 +497,8 @@ def get_smart_answer(question_text, is_numeric=False):
     if any(w in q for w in ["current ctc", "current salary", "current compensation", "current annual", "current package"]):
         return "0"
     if any(w in q for w in ["expected ctc", "expected salary", "desired salary", "expected compensation", "expected package"]):
-        return "400000" if is_numeric else "4 LPA"
+        # Purely numeric: returns "4" (4 LPA entry level number, no "LPA" text)
+        return "4"
 
     if any(w in q for w in ["notice", "joining", "how soon", "availability", "start date"]):
         # Fresher is an immediate joiner (0 days notice).
@@ -720,7 +725,8 @@ def answer_modal_questions(driver, modal=None):
                 "[0-9]" in inp_pattern or
                 any(w in q_lower for w in [
                     "how many", "years", "number of", "days", "months", "scale",
-                    "cgpa", "percentage", "rate", "1-10", "1 to 10", "experience do you have"
+                    "cgpa", "percentage", "rate", "1-10", "1 to 10", "experience do you have",
+                    "ctc", "salary", "compensation", "package", "notice period"
                 ])
             )
 

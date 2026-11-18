@@ -139,7 +139,8 @@ def get_smart_answer(question_text, is_numeric=False):
     if any(w in q for w in ["current ctc", "current salary", "current compensation", "current package"]):
         return "0"
     if any(w in q for w in ["expected ctc", "expected salary", "desired salary", "expected package"]):
-        return "400000" if is_numeric else "4 LPA"
+        # Purely numeric digits: "4" (standard 4 LPA number, no text)
+        return "4"
 
     if any(w in q for w in ["notice", "joining", "how soon", "availability", "start date"]):
         return "15" if (is_numeric or "day" in q) else "Immediate"
