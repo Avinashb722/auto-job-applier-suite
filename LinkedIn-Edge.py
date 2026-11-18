@@ -567,54 +567,68 @@ def get_smart_answer(question_text, is_numeric=False):
 
 
 def set_react_input(driver, element, value):
-    """Sets the value of an input element and dispatches React synthetic events so form state updates properly."""
+    """Sets the value of an input element using native keystrokes and React 18 event triggers."""
     try:
-        element.click()
-        time.sleep(0.1)
-        element.send_keys(Keys.CONTROL + "a")
-        element.send_keys(Keys.BACK_SPACE)
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
         time.sleep(0.1)
     except Exception:
         pass
 
+    # 1. Native Selenium typing (triggers real OS input events)
+    try:
+        element.click()
+        time.sleep(0.1)
+        element.send_keys(Keys.CONTROL + "a")
+        element.send_keys(Keys.BACKSPACE)
+        time.sleep(0.1)
+        element.send_keys(str(value))
+        time.sleep(0.1)
+    except Exception:
+        pass
+
+    # 2. React 18 synthetic event sync + valueTracker update
     try:
         driver.execute_script("""
             var input = arguments[0];
             var val = arguments[1];
-            input.focus();
-            var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
-            if (nativeSetter && nativeSetter.set) {
-                nativeSetter.set.call(input, val);
-            } else {
-                input.value = val;
+            if (input.value !== val) {
+                var prototype = Object.getPrototypeOf(input);
+                var descriptor = Object.getOwnPropertyDescriptor(prototype, 'value') || 
+                                 Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value') ||
+                                 Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+                if (descriptor && descriptor.set) {
+                    descriptor.set.call(input, val);
+                } else {
+                    input.value = val;
+                }
+            }
+            if (input._valueTracker) {
+                input._valueTracker.setValue('' + Math.random());
             }
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.dispatchEvent(new Event('change', { bubbles: true }));
             input.dispatchEvent(new Event('blur', { bubbles: true }));
         """, element, str(value))
     except Exception:
-        try:
-            element.send_keys(str(value))
-        except Exception:
-            pass
+        pass
 
 
 def answer_modal_questions(driver):
     """
     Finds and answers all question fields on the current LinkedIn Easy Apply modal step:
-    - Text inputs (type='text', type='number', or default)
+    - Text inputs (aria-label, preceding <p>, label)
     - Textareas
-    - Dropdowns (<select>)
+    - Dropdowns (<select> and custom listboxes/comboboxes)
     - Radio buttons (Yes / No / Fresher)
     - Checkboxes (Consent / acknowledgment)
     """
     answered_count = 0
-    modal_container = "//div[contains(@class, 'modal') or contains(@role, 'dialog') or contains(@class, 'artdeco-modal') or contains(@data-component-type, 'Modal')]"
+    modal_container = "//dialog | //*[@role='dialog'] | //div[contains(@class, 'jobs-easy-apply')] | //div[contains(@class, 'modal')]"
 
     # 1. Text Inputs and Textareas
     inputs = driver.find_elements(
         By.XPATH,
-        f"{modal_container}//input[@type='text' or @type='number' or not(@type)] | "
+        f"{modal_container}//input[@type='text' or @type='number' or @type='tel' or not(@type)] | "
         f"{modal_container}//textarea"
     )
 
@@ -628,7 +642,7 @@ def answer_modal_questions(driver):
             try:
                 parent_fb = inp.find_elements(
                     By.XPATH,
-                    "./ancestor::div[contains(@class, 'fb-dash-form-element') or contains(@class, 'form-group')][1]//div[contains(@class, 'artdeco-inline-feedback--error') or contains(., 'Invalid input') or contains(., 'valid')]"
+                    "./ancestor::div[contains(@class, 'fb-dash-form-element') or contains(@class, 'form-group') or contains(@class, 'easyApplyFieldFocus')][1]//div[contains(@class, 'error') or contains(., 'Invalid input') or contains(., 'valid') or contains(., 'required')]"
                 )
                 if parent_fb:
                     has_error = True
@@ -636,19 +650,34 @@ def answer_modal_questions(driver):
                 pass
 
             curr_val = inp.get_attribute("value") or ""
-            # Only skip if it already has a non-empty value AND no validation error
+            # If already filled with non-empty value and no validation error, skip
             if curr_val.strip() and not has_error:
                 continue
 
+            # Get Question Text from: 1) aria-label, 2) preceding <p>, 3) label, 4) parent container
             q_text = inp.get_attribute("aria-label") or ""
-            if not q_text:
+            if not q_text or len(q_text) < 3:
+                try:
+                    preceding_p = inp.find_elements(
+                        By.XPATH,
+                        "./ancestor::div[contains(@class, 'aaal6d') or contains(@class, 'fb-dash-form-element') or contains(@class, 'form')][1]//p"
+                    )
+                    for p in preceding_p:
+                        pt = p.text.strip()
+                        if pt and pt != "Additional Questions" and "characters" not in pt and len(pt) > 3:
+                            q_text = pt
+                            break
+                except Exception:
+                    pass
+
+            if not q_text or len(q_text) < 3:
                 inp_id = inp.get_attribute("id")
                 if inp_id:
                     labels = driver.find_elements(By.XPATH, f"//label[@for='{inp_id}']")
                     if labels and labels[0].text.strip():
                         q_text = labels[0].text.strip()
 
-            if not q_text:
+            if not q_text or len(q_text) < 3:
                 try:
                     parent_group = inp.find_element(
                         By.XPATH,
@@ -657,6 +686,9 @@ def answer_modal_questions(driver):
                     q_text = parent_group.text.split("\n")[0].strip()
                 except Exception:
                     pass
+
+            # Clean question text
+            q_text = q_text.replace("*", "").replace("Required", "").strip()
 
             inp_type = (inp.get_attribute("type") or "").lower()
             inp_inputmode = (inp.get_attribute("inputmode") or "").lower()
@@ -672,11 +704,9 @@ def answer_modal_questions(driver):
                 "number" in aria_desc or
                 "numeric" in inp_class or
                 "[0-9]" in inp_pattern or
-                r"\d" in inp_pattern or
-                has_error or
                 any(w in q_lower for w in [
                     "how many", "years", "number of", "days", "months", "scale",
-                    "cgpa", "percentage", "rate", "1-10", "1 to 10", "notice period"
+                    "cgpa", "percentage", "rate", "1-10", "1 to 10", "experience do you have"
                 ])
             )
 
@@ -690,42 +720,73 @@ def answer_modal_questions(driver):
             pass
 
     # 2. Radio Groups (Yes / No / Fresher)
-    fieldsets = driver.find_elements(By.XPATH, f"{modal_container}//fieldset")
-    for fs in fieldsets:
+    radios = driver.find_elements(
+        By.XPATH,
+        f"{modal_container}//input[@type='radio']"
+    )
+    processed_names = set()
+    for r in radios:
         try:
-            if not fs.is_displayed():
+            if not r.is_displayed():
                 continue
-            checked = fs.find_elements(By.XPATH, ".//input[@type='radio' and @checked]")
-            if checked:
+            name = r.get_attribute("name") or r.get_attribute("id")
+            if name in processed_names:
                 continue
 
-            legend_text = ""
-            legends = fs.find_elements(By.XPATH, ".//legend")
-            if legends:
-                legend_text = legends[0].text.lower()
+            # Find question text for this radio group
+            q_text = ""
+            try:
+                parent_group = r.find_element(
+                    By.XPATH,
+                    "./ancestor::fieldset[1] | ./ancestor::div[contains(@class, 'fb-dash-form-element') or contains(@class, 'form')][1]"
+                )
+                q_text = parent_group.text.split("\n")[0].lower()
+            except Exception:
+                pass
 
             # Target answer
-            if any(w in legend_text for w in ["fresher or experienced", "experience level", "are you a fresher"]):
+            if any(w in q_text for w in ["fresher or experienced", "experience level", "are you a fresher"]):
                 target_text = "fresher"
-            elif any(w in legend_text for w in ["sponsor", "visa", "require sponsorship", "need sponsorship"]):
+            elif any(w in q_text for w in ["sponsor", "visa", "require sponsorship", "need sponsorship"]):
                 target_text = "no"
-            elif any(w in legend_text for w in ["bond", "agreement", "service agreement"]):
+            elif any(w in q_text for w in ["bond", "agreement", "service agreement"]):
                 target_text = "yes"
             else:
                 target_text = "yes"
 
-            labels = fs.find_elements(By.XPATH, ".//label")
-            for lbl in labels:
-                if target_text in lbl.text.lower():
-                    driver.execute_script("arguments[0].click();", lbl)
-                    logger.info(f"  🔘 Question '{legend_text[:35]}' -> Selected '{lbl.text.strip()}'")
-                    answered_count += 1
-                    time.sleep(0.3)
+            # Find all radio options in this group
+            group_radios = driver.find_elements(
+                By.XPATH,
+                f"{modal_container}//input[@type='radio' and @name='{r.get_attribute('name')}']"
+            )
+            for gr in group_radios:
+                lbl = ""
+                gr_id = gr.get_attribute("id")
+                if gr_id:
+                    lbl_els = driver.find_elements(By.XPATH, f"//label[@for='{gr_id}']")
+                    if lbl_els:
+                        lbl = lbl_els[0].text.strip().lower()
+                if not lbl:
+                    try:
+                        lbl = gr.find_element(By.XPATH, "./following-sibling::label").text.strip().lower()
+                    except Exception:
+                        pass
+
+                if target_text in lbl:
+                    if not gr.is_selected():
+                        try:
+                            gr.click()
+                        except Exception:
+                            driver.execute_script("arguments[0].click();", gr)
+                        logger.info(f"  🔘 Radio '{q_text[:30]}' -> Selected '{target_text}'")
+                        answered_count += 1
                     break
+
+            processed_names.add(name)
         except Exception:
             pass
 
-    # 3. Dropdowns (<select>)
+    # 3. Dropdowns (<select> and custom listboxes)
     selects = driver.find_elements(By.XPATH, f"{modal_container}//select")
     for s in selects:
         try:
@@ -767,71 +828,81 @@ def answer_modal_questions(driver):
 
 def handle_easy_apply_modal(driver):
     """Advances through LinkedIn's Easy Apply modal (Auto-answers questions -> Next -> Review -> Submit)."""
-    for step in range(10):
+    modal_container = "//dialog | //*[@role='dialog'] | //div[contains(@class, 'jobs-easy-apply')] | //div[contains(@class, 'modal')]"
+
+    for step in range(12):
         time.sleep(1.5)
         try:
             # 1. Answer all question fields on the current step
             answer_modal_questions(driver)
-            time.sleep(0.8)
+            time.sleep(0.5)
 
             # 2. Check for Submit Application button
-            submit_btn = driver.find_elements(By.XPATH, "//button[@aria-label='Submit application' or contains(., 'Submit application')]")
-            if submit_btn:
-                driver.execute_script("arguments[0].click();", submit_btn[0])
-                time.sleep(3)
-                logger.info("✓ Clicked 'Submit application' button!")
-                return True
-
-            # 3. Check for Review button
-            review_btn = driver.find_elements(By.XPATH, "//button[@aria-label='Review your application' or contains(., 'Review')]")
-            if review_btn:
-                driver.execute_script("arguments[0].click();", review_btn[0])
-                time.sleep(2)
-                # If clicking review caused validation error, try recovering
-                error_msgs = driver.find_elements(By.XPATH, "//div[contains(@class, 'error') or contains(@class, 'artdeco-inline-feedback--error') or contains(., 'Invalid input') or contains(., 'valid')]")
-                if error_msgs:
-                    logger.warning("Detected validation error after Review, auto-correcting...")
-                    for err in error_msgs:
-                        try:
-                            rel_inps = err.find_elements(By.XPATH, "./ancestor::div[contains(@class, 'fb-dash-form-element') or contains(@class, 'form-group')][1]//input | ./preceding-sibling::input")
-                            for ri in rel_inps:
-                                set_react_input(driver, ri, "0")
-                        except Exception:
-                            pass
-                    answer_modal_questions(driver)
-                    time.sleep(1)
-                continue
-
-            # 4. Check for Next button
-            next_btn = driver.find_elements(By.XPATH, "//button[@aria-label='Continue to next step' or contains(., 'Next')]")
-            if next_btn:
-                driver.execute_script("arguments[0].click();", next_btn[0])
-                time.sleep(2)
-                error_msgs = driver.find_elements(By.XPATH, "//div[contains(@class, 'error') or contains(@class, 'artdeco-inline-feedback--error') or contains(., 'Invalid input') or contains(., 'valid')]")
-                if error_msgs:
-                    logger.warning("Detected validation error after Next, recovering...")
-                    for err in error_msgs:
-                        try:
-                            rel_inps = err.find_elements(By.XPATH, "./ancestor::div[contains(@class, 'fb-dash-form-element') or contains(@class, 'form-group')][1]//input | ./preceding-sibling::input")
-                            for ri in rel_inps:
-                                set_react_input(driver, ri, "0")
-                        except Exception:
-                            pass
-                    answer_modal_questions(driver)
-                    time.sleep(1)
-                continue
-
-            # 5. Check if error occurred on page (e.g. invalid input, try fixing with numeric fallback)
-            error_msgs = driver.find_elements(By.XPATH, "//div[contains(@class, 'error') or contains(@class, 'artdeco-inline-feedback--error') or contains(., 'Invalid input') or contains(., 'valid')]")
-            if error_msgs:
-                logger.warning("Detected input validation error, recovering with numeric answers...")
-                err_inputs = driver.find_elements(By.XPATH, "//div[contains(@class, 'artdeco-inline-feedback--error')]/ancestor::div[contains(@class, 'fb-dash-form-element') or contains(@class, 'form-group')][1]//input | //div[contains(@class, 'artdeco-inline-feedback--error')]/preceding-sibling::input")
-                for err_inp in err_inputs:
+            submit_btns = driver.find_elements(
+                By.XPATH,
+                f"{modal_container}//button[@aria-label='Submit application' or normalize-space(.)='Submit application' or contains(., 'Submit application')]"
+            )
+            for sb in submit_btns:
+                if sb.is_displayed():
+                    logger.info("Clicking 'Submit application' button...")
                     try:
-                        set_react_input(driver, err_inp, "0")
-                        time.sleep(0.3)
+                        sb.click()
                     except Exception:
-                        pass
+                        driver.execute_script("arguments[0].click();", sb)
+                    time.sleep(3)
+                    logger.info("✓ Submitted application successfully!")
+                    return True
+
+            # 3. Check for Next button (priority on multi-step forms)
+            next_btns = driver.find_elements(
+                By.XPATH,
+                f"{modal_container}//button[normalize-space(.)='Next' or @aria-label='Continue to next step' or contains(., 'Next')]"
+            )
+            clicked_nav = False
+            for nb in next_btns:
+                if nb.is_displayed() and "review" not in nb.text.lower():
+                    try:
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", nb)
+                        time.sleep(0.2)
+                        nb.click()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", nb)
+                    time.sleep(2)
+                    clicked_nav = True
+                    break
+
+            if clicked_nav:
+                continue
+
+            # 4. Check for Review button
+            review_btns = driver.find_elements(
+                By.XPATH,
+                f"{modal_container}//button[normalize-space(.)='Review' or @aria-label='Review your application' or contains(., 'Review')]"
+            )
+            for rb in review_btns:
+                if rb.is_displayed():
+                    try:
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", rb)
+                        time.sleep(0.2)
+                        rb.click()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", rb)
+                    time.sleep(2)
+                    clicked_nav = True
+                    break
+
+            if clicked_nav:
+                continue
+
+            # 5. Check if any errors occurred on page and re-answer specifically
+            error_msgs = driver.find_elements(
+                By.XPATH,
+                f"{modal_container}//div[contains(@class, 'error') or contains(., 'Invalid input') or contains(., 'valid') or contains(., 'required')]"
+            )
+            if error_msgs:
+                logger.warning("Detected question validation error, re-answering fields...")
+                answer_modal_questions(driver)
+                time.sleep(1)
 
         except Exception as e:
             logger.warning(f"Modal step error: {e}")
@@ -839,13 +910,19 @@ def handle_easy_apply_modal(driver):
 
     # Final cleanup: ensure modal is closed if stuck
     try:
-        close_btn = driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Dismiss') or contains(@aria-label, 'Close')]")
-        if close_btn:
-            driver.execute_script("arguments[0].click();", close_btn[0])
-            time.sleep(1)
-            discard_btn = driver.find_elements(By.XPATH, "//button[contains(., 'Discard')]")
-            if discard_btn:
-                driver.execute_script("arguments[0].click();", discard_btn[0])
+        close_btns = driver.find_elements(
+            By.XPATH,
+            f"{modal_container}//button[contains(@aria-label, 'Dismiss') or contains(@aria-label, 'Close')]"
+        )
+        for cb in close_btns:
+            if cb.is_displayed():
+                driver.execute_script("arguments[0].click();", cb)
+                time.sleep(1)
+                discard_btns = driver.find_elements(By.XPATH, "//button[contains(., 'Discard')]")
+                for db in discard_btns:
+                    if db.is_displayed():
+                        driver.execute_script("arguments[0].click();", db)
+                break
     except Exception:
         pass
     return False
