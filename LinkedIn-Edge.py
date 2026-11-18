@@ -566,6 +566,18 @@ def get_smart_answer(question_text, is_numeric=False):
     return ask_ai_for_modal_answer(question_text, is_numeric=is_numeric)
 
 
+def get_modal_root(driver):
+    """Finds the active visible modal element (<dialog> or [role='dialog'] or .jobs-easy-apply-modal)."""
+    candidates = driver.find_elements(By.XPATH, "//dialog | //*[@role='dialog'] | //div[contains(@class, 'jobs-easy-apply')] | //div[contains(@class, 'modal')]")
+    for c in candidates:
+        try:
+            if c.is_displayed() and c.size.get('height', 0) > 100 and c.size.get('width', 0) > 200:
+                return c
+        except Exception:
+            pass
+    return None
+
+
 def set_react_input(driver, element, value):
     """Sets the value of an input element using native keystrokes and React 18 event triggers."""
     try:
@@ -613,7 +625,7 @@ def set_react_input(driver, element, value):
         pass
 
 
-def answer_modal_questions(driver):
+def answer_modal_questions(driver, modal=None):
     """
     Finds and answers all question fields on the current LinkedIn Easy Apply modal step:
     - Text inputs (aria-label, preceding <p>, label)
@@ -623,13 +635,15 @@ def answer_modal_questions(driver):
     - Checkboxes (Consent / acknowledgment)
     """
     answered_count = 0
-    modal_container = "//dialog | //*[@role='dialog'] | //div[contains(@class, 'jobs-easy-apply')] | //div[contains(@class, 'modal')]"
+    if not modal:
+        modal = get_modal_root(driver)
+    if not modal:
+        return 0
 
-    # 1. Text Inputs and Textareas
-    inputs = driver.find_elements(
+    # 1. Text Inputs and Textareas relative to modal
+    inputs = modal.find_elements(
         By.XPATH,
-        f"{modal_container}//input[@type='text' or @type='number' or @type='tel' or not(@type)] | "
-        f"{modal_container}//textarea"
+        ".//input[@type='text' or @type='number' or @type='tel' or not(@type)] | .//textarea"
     )
 
     for inp in inputs:
@@ -673,7 +687,7 @@ def answer_modal_questions(driver):
             if not q_text or len(q_text) < 3:
                 inp_id = inp.get_attribute("id")
                 if inp_id:
-                    labels = driver.find_elements(By.XPATH, f"//label[@for='{inp_id}']")
+                    labels = modal.find_elements(By.XPATH, f".//label[@for='{inp_id}']")
                     if labels and labels[0].text.strip():
                         q_text = labels[0].text.strip()
 
@@ -719,11 +733,8 @@ def answer_modal_questions(driver):
         except Exception:
             pass
 
-    # 2. Radio Groups (Yes / No / Fresher)
-    radios = driver.find_elements(
-        By.XPATH,
-        f"{modal_container}//input[@type='radio']"
-    )
+    # 2. Radio Groups relative to modal
+    radios = modal.find_elements(By.XPATH, ".//input[@type='radio']")
     processed_names = set()
     for r in radios:
         try:
@@ -755,15 +766,15 @@ def answer_modal_questions(driver):
                 target_text = "yes"
 
             # Find all radio options in this group
-            group_radios = driver.find_elements(
+            group_radios = modal.find_elements(
                 By.XPATH,
-                f"{modal_container}//input[@type='radio' and @name='{r.get_attribute('name')}']"
+                f".//input[@type='radio' and @name='{r.get_attribute('name')}']"
             )
             for gr in group_radios:
                 lbl = ""
                 gr_id = gr.get_attribute("id")
                 if gr_id:
-                    lbl_els = driver.find_elements(By.XPATH, f"//label[@for='{gr_id}']")
+                    lbl_els = modal.find_elements(By.XPATH, f".//label[@for='{gr_id}']")
                     if lbl_els:
                         lbl = lbl_els[0].text.strip().lower()
                 if not lbl:
@@ -787,7 +798,7 @@ def answer_modal_questions(driver):
             pass
 
     # 3. Dropdowns (<select> and custom listboxes)
-    selects = driver.find_elements(By.XPATH, f"{modal_container}//select")
+    selects = modal.find_elements(By.XPATH, ".//select")
     for s in selects:
         try:
             if not s.is_displayed():
@@ -813,7 +824,7 @@ def answer_modal_questions(driver):
             pass
 
     # 4. Mandatory Checkboxes (Consent / Terms)
-    checkboxes = driver.find_elements(By.XPATH, f"{modal_container}//input[@type='checkbox']")
+    checkboxes = modal.find_elements(By.XPATH, ".//input[@type='checkbox']")
     for cb in checkboxes:
         try:
             if cb.is_displayed() and not cb.is_selected():
@@ -828,39 +839,28 @@ def answer_modal_questions(driver):
 
 def handle_easy_apply_modal(driver):
     """Advances through LinkedIn's Easy Apply modal (Auto-answers questions -> Next -> Review -> Submit)."""
-    modal_container = "//dialog | //*[@role='dialog'] | //div[contains(@class, 'jobs-easy-apply')] | //div[contains(@class, 'modal')]"
-
     for step in range(12):
         time.sleep(1.5)
         try:
+            modal = get_modal_root(driver)
+            if not modal:
+                # If no modal is displayed, check if application was submitted
+                time.sleep(1)
+                return True
+
             # 1. Answer all question fields on the current step
-            answer_modal_questions(driver)
+            answer_modal_questions(driver, modal=modal)
             time.sleep(0.5)
 
-            # 2. Check for Submit Application button
-            submit_btns = driver.find_elements(
+            # 2. Check for Next button FIRST (priority on multi-step forms)
+            next_btns = modal.find_elements(
                 By.XPATH,
-                f"{modal_container}//button[@aria-label='Submit application' or normalize-space(.)='Submit application' or contains(., 'Submit application')]"
-            )
-            for sb in submit_btns:
-                if sb.is_displayed():
-                    logger.info("Clicking 'Submit application' button...")
-                    try:
-                        sb.click()
-                    except Exception:
-                        driver.execute_script("arguments[0].click();", sb)
-                    time.sleep(3)
-                    logger.info("✓ Submitted application successfully!")
-                    return True
-
-            # 3. Check for Next button (priority on multi-step forms)
-            next_btns = driver.find_elements(
-                By.XPATH,
-                f"{modal_container}//button[normalize-space(.)='Next' or @aria-label='Continue to next step' or contains(., 'Next')]"
+                ".//button[normalize-space(.)='Next' or @aria-label='Continue to next step' or contains(., 'Next')]"
             )
             clicked_nav = False
             for nb in next_btns:
                 if nb.is_displayed() and "review" not in nb.text.lower():
+                    logger.info("Clicking 'Next' button...")
                     try:
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", nb)
                         time.sleep(0.2)
@@ -874,13 +874,14 @@ def handle_easy_apply_modal(driver):
             if clicked_nav:
                 continue
 
-            # 4. Check for Review button
-            review_btns = driver.find_elements(
+            # 3. Check for Review button SECOND
+            review_btns = modal.find_elements(
                 By.XPATH,
-                f"{modal_container}//button[normalize-space(.)='Review' or @aria-label='Review your application' or contains(., 'Review')]"
+                ".//button[normalize-space(.)='Review' or @aria-label='Review your application' or contains(., 'Review')]"
             )
             for rb in review_btns:
                 if rb.is_displayed():
+                    logger.info("Clicking 'Review' button...")
                     try:
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", rb)
                         time.sleep(0.2)
@@ -894,14 +895,30 @@ def handle_easy_apply_modal(driver):
             if clicked_nav:
                 continue
 
-            # 5. Check if any errors occurred on page and re-answer specifically
-            error_msgs = driver.find_elements(
+            # 4. Check for Submit Application button ONLY on final step (or single-step modal)
+            submit_btns = modal.find_elements(
                 By.XPATH,
-                f"{modal_container}//div[contains(@class, 'error') or contains(., 'Invalid input') or contains(., 'valid') or contains(., 'required')]"
+                ".//button[@aria-label='Submit application' or normalize-space(.)='Submit application' or contains(., 'Submit application')]"
+            )
+            for sb in submit_btns:
+                if sb.is_displayed() and sb.tag_name == 'button':
+                    logger.info("Clicking 'Submit application' button...")
+                    try:
+                        sb.click()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", sb)
+                    time.sleep(3)
+                    logger.info("✓ Submitted application successfully!")
+                    return True
+
+            # 5. Check if any errors occurred on page and re-answer
+            error_msgs = modal.find_elements(
+                By.XPATH,
+                ".//div[contains(@class, 'error') or contains(., 'Invalid input') or contains(., 'valid') or contains(., 'required')]"
             )
             if error_msgs:
                 logger.warning("Detected question validation error, re-answering fields...")
-                answer_modal_questions(driver)
+                answer_modal_questions(driver, modal=modal)
                 time.sleep(1)
 
         except Exception as e:
@@ -910,19 +927,21 @@ def handle_easy_apply_modal(driver):
 
     # Final cleanup: ensure modal is closed if stuck
     try:
-        close_btns = driver.find_elements(
-            By.XPATH,
-            f"{modal_container}//button[contains(@aria-label, 'Dismiss') or contains(@aria-label, 'Close')]"
-        )
-        for cb in close_btns:
-            if cb.is_displayed():
-                driver.execute_script("arguments[0].click();", cb)
-                time.sleep(1)
-                discard_btns = driver.find_elements(By.XPATH, "//button[contains(., 'Discard')]")
-                for db in discard_btns:
-                    if db.is_displayed():
-                        driver.execute_script("arguments[0].click();", db)
-                break
+        modal = get_modal_root(driver)
+        if modal:
+            close_btns = modal.find_elements(
+                By.XPATH,
+                ".//button[contains(@aria-label, 'Dismiss') or contains(@aria-label, 'Close')]"
+            )
+            for cb in close_btns:
+                if cb.is_displayed():
+                    driver.execute_script("arguments[0].click();", cb)
+                    time.sleep(1)
+                    discard_btns = driver.find_elements(By.XPATH, "//button[contains(., 'Discard')]")
+                    for db in discard_btns:
+                        if db.is_displayed():
+                            driver.execute_script("arguments[0].click();", db)
+                    break
     except Exception:
         pass
     return False
