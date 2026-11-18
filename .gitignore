@@ -1,7 +1,26 @@
-# Environment variables (contains sensitive credentials)
+# Environment variables (credentials, API keys, passwords)
 .env
+*.env
+*.env.local
 
-# Python cache
+# Browser user profiles (session cookies, login state, auth tokens)
+browser_profile/
+*/browser_profile/
+edge_indeed_profile/
+*/edge_indeed_profile/
+
+# Personal resumes and PDFs
+*.pdf
+resume*
+
+# Application tracking logs, answers, and dashboard output
+*applied.csv
+application_answers.csv
+dashboard.html
+*.log
+*.png
+
+# Python cache & bytecode
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,28 +28,23 @@ __pycache__/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-# Output CSV files
-naukriapplied.csv
-
-# IDE/editor files
+# IDE & Editor files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS files
+# Operating System files
 .DS_Store
 Thumbs.db
-
-# Distribution / packaging
-dist/
-build/
-*.egg-info/
 
 # Virtual environments
 venv/
 env/
 .venv/
 
-application_answers.csv
+# Distribution / packaging
+dist/
+build/
+*.egg-info/

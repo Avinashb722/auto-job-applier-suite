@@ -48,8 +48,161 @@ load_dotenv()
 
 NAUKRI_EMAIL = os.getenv('NAUKRI_EMAIL', '')
 NAUKRI_PASSWORD = os.getenv('NAUKRI_PASSWORD', '')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 MAX_SELECT = 5
 ANSWERS_CSV = "application_answers.csv"
+
+
+def load_candidate_resume():
+    """Extracts text from candidate's resume PDF (specified in .env RESUME_PATH)."""
+    resume_path = os.getenv('RESUME_PATH', 'resume.pdf')
+    if os.path.exists(resume_path):
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(resume_path)
+            pages_text = [p.extract_text() for p in reader.pages if p.extract_text()]
+            full_text = "\n".join(pages_text).strip()
+            if len(full_text) > 100:
+                logger.info(f"✓ Loaded resume text from '{resume_path}' ({len(full_text)} chars)")
+                return full_text
+        except Exception:
+            pass
+        try:
+            import PyPDF2
+            reader = PyPDF2.PdfReader(resume_path)
+            pages_text = [p.extract_text() for p in reader.pages if p.extract_text()]
+            full_text = "\n".join(pages_text).strip()
+            if len(full_text) > 100:
+                logger.info(f"✓ Loaded resume text via PyPDF2 ({len(full_text)} chars)")
+                return full_text
+        except Exception:
+            pass
+
+    cand_name = os.getenv('CANDIDATE_NAME', 'Candidate')
+    return f"Candidate: {cand_name}\nSkills: Python, Django, React, Node.js, SQL\nExperience: 0-2 Years (Fresher Full Stack Developer)"
+
+
+CANDIDATE_RESUME_TEXT = load_candidate_resume()
+
+
+def ask_ai_for_modal_answer(question_text, is_numeric=False):
+    """Uses Gemini AI with Candidate Resume to answer unfamiliar modal/chatbot questions."""
+    if not GEMINI_API_KEY:
+        return "1" if is_numeric else "Yes"
+
+    try:
+        import requests
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
+        cand_name = os.getenv('CANDIDATE_NAME', 'the candidate')
+        num_instruction = "This input accepts ONLY a single integer or decimal number (e.g. 1, 0, 8.5, 400000). Output ONLY the number." if is_numeric else "Provide a concise, professional answer (1-2 sentences max) written in the first person based on the candidate's resume."
+        prompt = f"""You are filling out a job application on behalf of candidate {cand_name} using his resume.
+
+Candidate Resume:
+{CANDIDATE_RESUME_TEXT[:2200]}
+
+Job Application Question:
+"{question_text}"
+
+Formatting Rules:
+- {num_instruction}
+- Do NOT include any explanations, prefixes, markdown, or quotation marks. Return ONLY the answer text."""
+
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        res = requests.post(url, json=payload, timeout=7)
+        if res.status_code == 200:
+            ans = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            ans = ans.replace('"', '').replace("'", '').strip()
+            if ans:
+                logger.info(f"  🤖 Gemini AI generated answer: '{ans[:60]}'")
+                return ans
+    except Exception as e:
+        logger.debug(f"AI modal answer generation: {e}")
+
+    return "1" if is_numeric else "Yes"
+
+
+def get_smart_answer(question_text, is_numeric=False):
+    """Answers application questions using candidate's exact profile table."""
+    q = question_text.lower().strip()
+
+    # 1. Experience Fields
+    if any(w in q for w in ["total work experience", "total experience", "overall experience", "years of overall"]):
+        return "0"
+    if "html" in q or "css" in q:
+        return "2"
+    if any(k in q for k in ["python", "javascript", "react", "node", "express", "sql", "mysql", "git", "github", "django"]):
+        return "1"
+    if any(w in q for w in ["how many years", "years of experience", "experience with", "experience in"]):
+        return "1"
+
+    # 2. Personal & Logistics
+    if any(w in q for w in ["current ctc", "current salary", "current compensation", "current package"]):
+        return "0"
+    if any(w in q for w in ["expected ctc", "expected salary", "desired salary", "expected package"]):
+        return "400000" if is_numeric else "4 LPA"
+
+    if any(w in q for w in ["notice", "joining", "how soon", "availability", "start date"]):
+        return "15" if (is_numeric or "day" in q) else "Immediate"
+
+    if any(w in q for w in ["current employer", "current company"]):
+        return "Fresher"
+
+    if any(w in q for w in ["graduation year", "year of graduation", "year of passing", "pass out year", "passing year"]):
+        return "2026"
+
+    if any(w in q for w in ["highest qualification", "degree", "education", "major"]):
+        return os.getenv('CANDIDATE_DEGREE', 'B.E. in Computer Science and Engineering')
+
+    if any(w in q for w in ["cgpa", "gpa"]):
+        return os.getenv('CANDIDATE_CGPA', '8.5')
+    if any(w in q for w in ["percentage", "marks"]):
+        return os.getenv('CANDIDATE_PERCENTAGE', '85')
+
+    if any(w in q for w in ["location", "city", "current city"]):
+        return os.getenv('LOCATION', 'Bengaluru, Karnataka')
+    if any(w in q for w in ["pincode", "zip"]):
+        return "560001"
+
+    if any(w in q for w in ["relocate", "relocation", "willing to relocate"]):
+        return "Yes"
+
+    if "github" in q or "portfolio" in q:
+        return os.getenv('CANDIDATE_GITHUB', 'https://github.com/your-username')
+    if "linkedin" in q:
+        return os.getenv('CANDIDATE_LINKEDIN', 'https://www.linkedin.com/in/your-username')
+
+    if any(w in q for w in ["phone", "mobile", "contact number"]):
+        return os.getenv('CANDIDATE_PHONE', '9999999999')
+    if "email" in q:
+        return os.getenv('CANDIDATE_EMAIL', 'candidate@example.com')
+
+    # 3. Short Answers
+    if any(w in q for w in ["tell us about yourself", "about yourself", "introduce yourself", "bio"]):
+        return os.getenv('CANDIDATE_BIO', "I'm a 2026 Computer Science graduate with hands-on experience in full-stack development across Python, JavaScript, React, Node.js and SQL. I've built deployed projects and completed engineering internships. I'm looking for my first full-time role to contribute and grow with a strong team.")
+
+    if any(w in q for w in ["why should we hire you", "why hire you", "why hire"]):
+        return os.getenv('CANDIDATE_WHY_HIRE', "I have hands-on experience through internships and deployed projects, so I'm comfortable with Git workflows, testing, and building features end-to-end. I learn quickly and take feedback constructively.")
+
+    if any(w in q for w in ["why are you interested", "why this role", "why this company", "why do you want to work"]):
+        return os.getenv('CANDIDATE_WHY_ROLE', "It matches my skills in full-stack development, and it's the kind of work I want to build my career on. I'd like to apply what I learned and continue improving under experienced engineers.")
+
+    if any(w in q for w in ["describe a project", "proud of", "best project", "key project"]):
+        return os.getenv('CANDIDATE_PROJECT_SUMMARY', "A full-stack application built with Python and React with RESTful APIs, asynchronous task processing, clean modular architecture, and real users.")
+
+    if "strength" in q:
+        return "I finish what I start, learn new technologies quickly, and focus on building functional, maintainable code."
+
+    if "weakness" in q:
+        return "I sometimes spend too long perfecting fine details, so I now set structured milestones to prioritize delivery first."
+
+    if any(w in q for w in ["3-5 years", "in 5 years", "where do you see yourself", "future goals"]):
+        return "Growing into a dependable full-stack engineer who designs scalable systems and mentors upcoming developers."
+
+    if any(w in q for w in ["do you have any experience", "have any experience", "prior experience"]):
+        return os.getenv('CANDIDATE_EXPERIENCE_SUMMARY', "Yes, I have completed software development internships along with full-stack personal and academic projects.")
+
+    logger.info(f"  🔍 Unknown question '{question_text[:40]}' -> Querying Gemini AI with Resume...")
+    return ask_ai_for_modal_answer(question_text, is_numeric=is_numeric)
 
 TABS = [
     {"num": 1, "id": "apply",        "label": "Applies"},
@@ -476,60 +629,46 @@ def handle_radio_buttons(driver, known_answers):
                 continue
         # If known answer didn't match any option, fall through to unknown flow
 
-    # UNKNOWN → log and wait for user to click in browser
-    logger.info(f"   ❓ Unknown radio. Options: {options}")
-    logger.info("   👆 Click your answer in the browser...")
+    # If not in CSV, get smart answer from fresher table or Gemini AI fallback
+    smart_ans = get_smart_answer(question_text, is_numeric=False)
+    radios = container.find_elements(By.CSS_SELECTOR, ".ssrc__radio")
+    lbls = container.find_elements(By.CSS_SELECTOR, ".ssrc__label")
 
-    # Wait for user to click one — re-fetch elements every iteration to avoid stale references
-    waited = 0
-    while waited < 30:  # up to 60 seconds
-        time.sleep(2)
-        waited += 2
-
-        # Check if container still exists
-        try:
-            current_container = driver.find_element(By.CSS_SELECTOR, ".singleselect-radiobutton-container")
-        except NoSuchElementException:
-            return False
-
-        # Re-fetch radios & labels fresh every poll cycle to avoid stale references
-        try:
-            radios = current_container.find_elements(By.CSS_SELECTOR, ".ssrc__radio")
-            lbls = current_container.find_elements(By.CSS_SELECTOR, ".ssrc__label")
-        except Exception:
-            radios, lbls = [], []
-
-        if not radios:
-            if waited % 10 == 0:
-                logger.info(f"   Waiting for radio options to load... ({waited}s)")
-            continue
-
-        for rb, lbl in zip(radios, lbls):
+    for rb, lbl in zip(radios, lbls):
+        t = (lbl.text or rb.get_attribute('value') or '').strip().lower()
+        if smart_ans.lower() in t or t in smart_ans.lower():
             try:
-                if rb.is_selected():
-                    chosen = lbl.text.strip()
-                    logger.info(f"   ✓ User selected: '{chosen}'")
-                    save_answer(question_text, chosen, "radio")
-                    time.sleep(1)
-                    return True
-            except StaleElementReferenceException:
-                # Element went stale — will retry on next iteration
-                continue
-            except Exception:
-                continue
-
-        # Check if container is no longer displayed (next question loaded)
-        try:
-            if not current_container.is_displayed():
-                # The radio question was answered (by user) and replaced with next question
+                driver.execute_script("arguments[0].click();", rb)
+                logger.info(f"   ✓ Auto-selected '{lbl.text.strip()}' (from Smart/AI matcher)")
+                save_answer(question_text, lbl.text.strip(), "radio")
+                time.sleep(1)
+                _click_save_after_radio(driver)
                 return True
-        except Exception:
+            except Exception:
+                pass
+
+    # Fallback to first positive option ('Yes' or 'Fresher')
+    for rb, lbl in zip(radios, lbls):
+        t = lbl.text.strip().lower()
+        if "yes" in t or "fresher" in t:
+            try:
+                driver.execute_script("arguments[0].click();", rb)
+                logger.info(f"   ✓ Fallback selected '{lbl.text.strip()}'")
+                save_answer(question_text, lbl.text.strip(), "radio")
+                time.sleep(1)
+                _click_save_after_radio(driver)
+                return True
+            except Exception:
+                pass
+
+    if radios:
+        try:
+            driver.execute_script("arguments[0].click();", radios[0])
+            _click_save_after_radio(driver)
             return True
+        except Exception:
+            pass
 
-        if waited % 10 == 0:
-            logger.info(f"   Still waiting for you to click an option... ({waited}s)")
-
-    logger.warning("   Timed out waiting for radio selection.")
     return False
 
 
@@ -583,39 +722,39 @@ def handle_contenteditable(driver, known_answers):
             pass
         return True
 
-    # UNKNOWN → log and wait for user to type & submit in browser
-    current_user_msg_count = get_user_message_count(driver)
-    logger.info(f"   ❓ Unknown text question.")
-    logger.info("   ✏️ Type your answer in the browser and click Send/Save...")
+    # If not in CSV, get answer from fresher table or Gemini AI with Resume
+    is_num = any(w in question_text.lower() for w in ["how many", "years", "ctc", "salary", "experience"])
+    answer = get_smart_answer(question_text, is_numeric=is_num)
+    try:
+        fresh_text_area = find_chat_text_area(driver)
+        if fresh_text_area:
+            driver.execute_script("""
+                arguments[0].focus();
+                if (arguments[0].tagName === 'DIV') {
+                    arguments[0].innerText = arguments[1];
+                } else {
+                    arguments[0].value = arguments[1];
+                }
+                arguments[0].dispatchEvent(new Event('input', {bubbles: true}));
+                arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
+            """, fresh_text_area, answer)
+            logger.info(f"   ✓ Auto-answered '{question_text[:35]}' with '{answer[:50]}'")
+            save_answer(question_text, answer, "text")
+            time.sleep(0.5)
+            try:
+                fresh_text_area.send_keys(Keys.RETURN)
+            except Exception:
+                pass
+            time.sleep(0.5)
 
-    waited = 0
-    while waited < 60:
-        time.sleep(2)
-        waited += 2
-
-        try:
-            # Did user submit an answer? (user message count increased)
-            new_count = get_user_message_count(driver)
-            if new_count > current_user_msg_count:
-                answer = get_latest_user_answer(driver)
-                if answer:
-                    logger.info(f"   ✓ User answered: '{answer}'")
-                    save_answer(question_text, answer, "text")
-                    time.sleep(2)
-                    return True
-
-            if not is_drawer_open(driver):
+            save_btn = find_save_button(driver)
+            if save_btn and click_save_button(driver, save_btn):
+                logger.info("   Clicked Save after auto-fill.")
+                time.sleep(3)
                 return True
-        except StaleElementReferenceException:
-            # DOM re-rendered — retry next iteration
-            continue
-        except Exception:
-            continue
+    except Exception as e:
+        logger.warning(f"   Could not auto-fill text: {e}")
 
-        if waited % 10 == 0:
-            logger.info(f"   Still waiting for you to type & send... ({waited}s)")
-
-    logger.warning("   Timed out waiting for text answer.")
     return False
 
 

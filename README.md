@@ -1,155 +1,109 @@
-# Naukri-Autoapply-Bot
+# Auto Job Applier Suite 🚀
 
-> Automation that applies to jobs on Naukri.com automatically for faster job hunting. Uses **Selenium** for browser automation and **BeautifulSoup** for parsing job listings.
+> Autonomous, multi-platform job application bot suite supporting **LinkedIn Easy Apply**, **Naukri**, **Indeed**, and **Foundit** with Microsoft Edge automation, Gemini AI resume match scoring, dynamic question answering, and a real-time web dashboard.
 
-## 📋 Features
+---
 
-- ✅ Automatically logs in to Naukri.com
-- ✅ **Multi-tab parallel search** — Opens each keyword category in its own browser tab simultaneously
-- ✅ Searches for jobs by keywords and location (updated for 2026 Naukri redesign)
-- ✅ Visits job listings and clicks "Apply" / "Apply on company site"
-- ✅ Handles custom first/last name fields and "Submit and Apply" flow
-- ✅ Detects daily application quota limits
-- ✅ Saves results (passed/failed) to a CSV file
-- ✅ Uses **Microsoft Edge** browser
-- ✅ Uses `webdriver-manager` for automatic driver download (no manual setup!)
+## ✨ Features
 
-## 🚀 How Multi-Tab Parallel Search Works
+- **Multi-Platform Support**:
+  - 💼 **LinkedIn**: Easy Apply automation, entry-level & fresh posting filter, multi-step modal question answering.
+  - 🔷 **Naukri**: Single-click apply, dynamic chatbot questionnaire drawer answering, quota monitoring.
+  - 🎯 **Indeed**: Automated apply flows with smart input filling.
+  - 🟣 **Foundit**: Monster India search, filter, and application automation.
+- **Two-Tier Intelligent Evaluation**:
+  - **Tier 1 (Fast Rule Screening)**: Experience requirement parser (filters >2 yrs), senior/lead veto checks, and veto technology filters.
+  - **Tier 2 (Gemini AI Match)**: Evaluates candidate resume against the exact Job Description (JD) and scores candidate fit from 0 to 100.
+- **Dynamic Question Answering**:
+  - Automatically answers modal questions (Notice period, CTC, experience, tools, graduation year, degree, CGPA, short answers).
+  - Unfamiliar questions are automatically answered via Gemini AI using the candidate's resume.
+- **Live Web Dashboard (`dashboard.html`)**:
+  - Sorted with **Today Applied First** by default.
+  - Real-time status filters: `Applied` (Green), `Rejected / Skipped` (Slate), and `Failed` (Amber).
+  - Instant live search and direct `View ↗` links to job postings.
+- **One-Click Desktop Launcher (`Job-AutoApply-Suite.bat`)**:
+  - Interactive console launcher to run any single platform, run all platforms sequentially, or inspect the web dashboard.
+- **Privacy & Security First**:
+  - All personal details, passwords, cookies, and resumes are kept strictly local in `.env` and `.gitignore`.
 
-Instead of processing each keyword one-by-one (slow), the bot **opens every keyword search page in its own browser tab simultaneously**:
+---
 
-```
-Keyword: "python developer"  → Tab 1 (Page 1) + Tab 2 (Page 2)
-Keyword: "data analyst"     → Tab 3 (Page 1) + Tab 4 (Page 2)
-Keyword: "software engineer" → Tab 5 (Page 1) + Tab 6 (Page 2)
-...all open at the same time!
-```
+## 🛠️ Installation & Setup
 
-**Benefits:**
-- ⚡ **Much faster** — all keyword searches load in parallel instead of waiting sequentially
-- 📊 **More jobs found** — each keyword gets equal attention
-- 🔄 **Smart deduplication** — duplicate job links across keywords are automatically removed before applying
-
-## 🚀 Quick Start
-
-### Prerequisites
-- **Python 3.7+** installed on your system
-- **Microsoft Edge** browser installed
-- A valid **Naukri.com** account
-
-### 1. Clone the repository
-
+### 1. Clone the Repository
 ```bash
-git clone https://github.com/lordzohar/Naukri-autoapply-bot.git
-cd Naukri-autoapply-bot
+git clone https://github.com/Avinashb722/auto-job-applier-suite.git
+cd auto-job-applier-suite
 ```
 
-### 2. Install dependencies
-
-It's recommended to use a virtual environment:
-
+### 2. Install Dependencies
 ```bash
-# Create a virtual environment (optional but recommended)
-python -m venv venv
-
-# Activate it:
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
-
-# Install required packages
 pip install -r requirements.txt
 ```
 
-### 3. Configure your credentials
-
+### 3. Configure Environment Variables
+Copy `.env.example` to `.env` and configure your settings:
 ```bash
-# Copy the example environment file
-copy .env.example .env
+cp .env.example .env
 ```
+Fill in your details in `.env`:
+- `GEMINI_API_KEY`: Your Google Gemini API key for AI scoring and question answering.
+- `NAUKRI_EMAIL` & `NAUKRI_PASSWORD`: Your credentials (stored locally only).
+- `RESUME_PATH`: Path to your local `resume.pdf`.
+- `KEYWORDS` & `LOCATION`: Your target job titles and city (e.g. `Python Developer`, `Bangalore`).
 
-Then edit **`.env`** (⚠️ NEVER commit this file) with your details:
+---
 
-```ini
-# Your Naukri.com login credentials
-NAUKRI_EMAIL=your_email@example.com
-NAUKRI_PASSWORD=your_password
+## 🚀 Usage
 
-# Your personal details
-FIRSTNAME=YourFirstName
-LASTNAME=YourLastName
-
-# Job search keywords (comma-separated)
-KEYWORDS=python developer, data analyst, software engineer
-
-# Location (leave empty for all locations, or specify a city like "bangalore", "mumbai", "remote")
-LOCATION=bangalore
-
-# Number of search result pages to scrape per keyword (default: 2)
-PAGES_PER_KEYWORD=2
-
-# Maximum applications per run (Naukri allows ~100/day)
-MAX_APPLICATIONS=50
+### Option A: Interactive Launcher (Recommended)
+Double-click `Job-AutoApply-Suite.bat` or run:
+```cmd
+Job-AutoApply-Suite.bat
 ```
+Select a menu option:
+* `[1]` Run Naukri Bot
+* `[2]` Run LinkedIn Easy Apply Bot
+* `[3]` Run Indeed Bot
+* `[4]` Run Foundit Bot
+* `[5]` Run All Platforms Sequentially
+* `[6]` Open Web Dashboard
 
-### 4. Run the bot
-
+### Option B: Run Individual Bots
 ```bash
+# Run LinkedIn Bot
+python LinkedIn-Edge.py
+
+# Run Naukri Bot
 python Naukri-Edge.py
+
+# Run Foundit Bot
+python Foundit-Edge.py
+
+# Run Indeed Bot
+python Indeed-Edge.py
+
+# Open Web Dashboard
+python dashboard.py
 ```
 
-> **Note:** The script uses `webdriver-manager` to automatically download the correct EdgeDriver. No manual driver setup needed!
+---
 
-### 5. Check results
+## 📊 Live Application Dashboard
 
-After running, results are saved to **`naukriapplied.csv`** with two columns:
-- `passed` — URLs of jobs successfully applied to
-- `failed` — URLs where the apply attempt failed
+Run `python dashboard.py` at any time to open `dashboard.html` in your default browser:
+* **All Platforms Tab**: Consolidated view across LinkedIn, Naukri, Indeed, and Foundit.
+* **Platform Specific Tabs**: Filter applications per portal.
+* **Status Badges**: Filter by `Applied`, `Rejected`, or `Failed`.
+* **Date Filters**: View `Today Only` or `All Time`.
 
-## 🔧 2026 Naukri.com Update
+---
 
-The bot has been updated to work with Naukri.com's 2026 redesign. Key changes:
+## 🔒 Security & Privacy Notice
+* **Never commit `.env`** or `browser_profile/` to git.
+* All session cookies, credentials, application history CSV files, and resume PDFs are excluded via `.gitignore`.
 
-| Old (original script) | New (updated) |
-|----------------------|---------------|
-| Job cards: `article.jobTuple.bgWhite.br4.mb-8` | Job cards: `div.srp-jobtuple-wrapper > div.cust-job-tuple` |
-| Title links: `a.title.fw500.ellipsis` | Title links: `a.title` (inside `h2`) |
-| Search URL: `/{keyword}-{page}` | Search URL: `/{keyword}-jobs` or `/{keyword}-jobs-in-{location}` |
-| Apply button: `//*[text()='Apply']` | Apply button: `//button[contains(text(),'Apply on company site')]` |
-| Page structure: `article` tags | Page structure: React/Next.js app using `div` with hashed CSS classes |
+---
 
-## 📁 Project Structure
-
-```
-Naukri-autoapply-bot/
-├── .env.example          # Example environment configuration (copy to .env)
-├── .gitignore            # Files to exclude from git
-├── requirements.txt      # Python dependencies
-├── README.md             # This file
-├── Naukri-Edge.py        # Main bot script for Microsoft Edge browser
-├── Naukri autoapply jobs.ipynb  # Jupyter Notebook version (legacy)
-└── naukriapplied.csv     # Output: applied/failed job links (auto-generated)
-```
-
-## 🔧 Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| `ModuleNotFoundError` | Run `pip install -r requirements.txt` |
-| Browser driver not found | `webdriver-manager` handles this automatically. Ensure you're connected to the internet on first run. |
-| Login failed | Double-check your `NAUKRI_EMAIL` and `NAUKRI_PASSWORD` in `.env` |
-| No jobs found | Try broader keywords or remove the location filter |
-| "Daily quota expired" | Naukri limits daily applications. Try again the next day. |
-| Script too fast/slow | Adjust the `time.sleep()` values in the script if needed |
-| "Apply on company site" opens external site | This is expected — many Naukri jobs now redirect to company career pages |
-
-## ⚠️ Disclaimer
-
-- Use this bot responsibly and in accordance with Naukri.com's Terms of Service
-- The bot mimics human behavior but excessive automation may lead to account restrictions
-- This project is for educational purposes
-
-## 🔗 Original Repository
-
-[github.com/lordzohar/Naukri-autoapply-bot](https://github.com/lordzohar/Naukri-autoapply-bot)
+## 📄 License
+MIT License. Created for educational and personal automation purposes.
