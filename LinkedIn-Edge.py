@@ -873,7 +873,7 @@ def build_linkedin_search_url(keyword):
 def apply_linkedin_entry_level_filter(driver):
     """
     Applies the 'Entry-level' filter in LinkedIn's modern UI.
-    Opens the 'Experience level' pill, clicks 'Entry-level', and submits 'Show results'.
+    Opens the 'Experience level' pill, clicks 'Entry-level' checkbox directly, and submits 'Show results'.
     """
     try:
         # Check if Entry-level pill is already active (green pill)
@@ -901,30 +901,49 @@ def apply_linkedin_entry_level_filter(driver):
         ActionChains(driver).move_to_element(exp_pills[0]).click().perform()
         time.sleep(1.5)
 
-        # 2. Click the 'Entry-level' option inside the popup
-        entry_options = driver.find_elements(
+        # 2. Click the exact 'Entry-level' checkbox input by aria-label
+        entry_cbs = driver.find_elements(
             By.XPATH,
-            "//p[normalize-space(.)='Entry-level'] | "
-            "//span[normalize-space(.)='Entry-level'] | "
-            "//*[text()='Entry-level']"
+            "//input[@type='checkbox' and @aria-label='Entry-level'] | "
+            "//input[@type='checkbox' and contains(@aria-label, 'Entry')] | "
+            "//p[normalize-space(.)='Entry-level']/ancestor::div[contains(@class, 'LazyColumn')]//input[@type='checkbox']"
         )
-        if entry_options:
+        if entry_cbs:
             logger.info("Selecting 'Entry-level' checkbox...")
-            ActionChains(driver).move_to_element(entry_options[0]).click().perform()
+            try:
+                ActionChains(driver).move_to_element(entry_cbs[0]).click().perform()
+            except Exception:
+                driver.execute_script("arguments[0].click();", entry_cbs[0])
             time.sleep(1)
+        else:
+            # Fallback to clicking text
+            entry_options = driver.find_elements(By.XPATH, "//p[normalize-space(.)='Entry-level']")
+            if entry_options:
+                try:
+                    ActionChains(driver).move_to_element(entry_options[0]).click().perform()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", entry_options[0])
+                time.sleep(1)
 
-        # 3. Click 'Show results' button
+        # 3. Click 'Show results' button (may be <a>, <button>, or <span>)
         show_btns = driver.find_elements(
             By.XPATH,
-            "//span[normalize-space(.)='Show results'] | "
+            "//span[normalize-space(.)='Show results']/ancestor::a | "
+            "//span[normalize-space(.)='Show results']/ancestor::button | "
+            "//a[contains(., 'Show results')] | "
             "//button[contains(., 'Show results')] | "
-            "//*[text()='Show results']"
+            "//*[normalize-space(.)='Show results']"
         )
-        if show_btns:
-            logger.info("Clicking 'Show results' to apply Entry-level filter...")
-            ActionChains(driver).move_to_element(show_btns[0]).click().perform()
-            time.sleep(3)
-            logger.info("✓ Entry-level filter applied successfully!")
+        for b in show_btns:
+            if b.is_displayed():
+                logger.info(f"Clicking 'Show results' ({b.tag_name}) to apply Entry-level filter...")
+                try:
+                    ActionChains(driver).move_to_element(b).click().perform()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", b)
+                time.sleep(3)
+                logger.info("✓ Entry-level filter applied successfully!")
+                break
 
     except Exception as e:
         logger.warning(f"Could not apply Entry-level UI filter: {e}")
